@@ -54,5 +54,36 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    if (result != 0) {
+        std::cerr << "WSAStartup error=" << result << std::endl;
+        return 1;
+    }
+
+    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    if (clientSocket == INVALID_SOCKET) {
+        WSACleanup();
+        return 1;
+    }
+
+    DWORD timeoutMs = static_cast<DWORD>(timeout) * 1000;
+
+    setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+
+    sockaddr_in serverAddress{};
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, host.c_str(), &serverAddress.sin_addr) != 1) {
+        std::cerr << "Invalid IPv4 address." << std::endl;
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+
     return 0;
 }
