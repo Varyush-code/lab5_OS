@@ -170,5 +170,26 @@ int main(int argc, char* argv[])
 
     std::vector<std::thread> workers;
 
+    while (running)
+    {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(serverSocket, &readSet);
+
+        timeval tv{};
+        tv.tv_sec = 0;
+        tv.tv_usec = 500000;
+
+        int ready = select(0, &readSet, nullptr, nullptr, &tv);
+
+        if (ready == SOCKET_ERROR) {
+            if (running) log(socketError("select"));
+            break;
+        }
+
+        if (ready == 0) continue;
+
+    }
+
     return 0;
-}
+} 
