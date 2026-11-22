@@ -129,6 +129,38 @@ bool receiveMessage(SOCKET s, std::string& message)
     return receiveAll(s, &message[0], static_cast<int>(length));
 }
 
+bool parseRequest(const std::string& message, std::string& version, std::string& type,
+    std::string& requestId, std::string& clientId, std::string& command)
+{
+    size_t pos = 0;
+    size_t next;
+
+    std::string* fields[] = {
+        &version, &type, &requestId, &clientId
+    };
+
+    for (int i = 0; i < 4; i++) {
+        next = message.find('|', pos);
+        if (next == std::string::npos) return false;
+        *fields[i] = message.substr(pos, next - pos);
+        pos = next + 1;
+    }
+
+    command = message.substr(pos);
+    return !version.empty() && !type.empty() && !requestId.empty() && !clientId.empty() && !command.empty();
+}
+
+bool validNumber(const std::string& value)
+{
+    if (value.empty() || value.size() > 10) return false;
+
+    return all_of(value.begin(), value.end(),
+        [](unsigned char c) {
+            return c >= '0' && c <= '9';
+        });
+}
+
+
 int main(int argc, char* argv[])
 {
     SetConsoleOutputCP(CP_UTF8);
