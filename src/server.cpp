@@ -160,6 +160,111 @@ bool validNumber(const std::string& value)
         });
 }
 
+std::string executeCommand(const std::string& command)
+{
+    if (command == "HELP") {
+        return
+            "Available commands:\n"
+            "HELP - show commands\n"
+            "TIME - server time\n"
+            "UPTIME - server uptime\n"
+            "ECHO text - return text\n"
+            "STATS - processed requests\n"
+            "QUIT - disconnect";
+    }
+
+    if (command == "TIME") return currentTime();
+    if (command == "UPTIME") return getUptime();
+    if (command == "STATS") return "Processed requests: " + std::to_string(requestCount.load());
+    if (command.rfind("ECHO ", 0) == 0) return command.substr(5);
+    return "Unknown command: " + command;
+}
+
+void handleClient(SOCKET clientSocket, sockaddr_in clientAddress, int timeout)
+{
+    char ip[INET_ADDRSTRLEN]{};
+
+    inet_ntop(AF_INET, &clientAddress.sin_addr, ip, sizeof(ip));
+    int port = ntohs(clientAddress.sin_port);
+
+    std::string address = std::string(ip) + ":" + std::to_string(port);
+    DWORD timeoutMs = static_cast<DWORD>(timeout) * 1000;
+
+    setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+
+    std::string clientId = "unknown";
+    log("CLIENT_CONNECTED address=" + address);
+
+    while (running) {
+        std::string message;
+
+        if (!receiveMessage(clientSocket, message)) {
+            log("CLIENT_DISCONNECTED id=" + clientId + " address=" + address + " reason=connection_closed_or_timeout");
+            break;
+        }
+
+        std::string version, type, requestId, receivedId, command;
+
+        if (!parseRequest(message, version, type, requestId, receivedId, command)) {
+            log("PROTOCOL_ERROR address=" + address);
+            sendMessage(clientSocket, "1|RESP|0|ERR|Invalid request format");
+            break;
+        }
+
+        clientId = receivedId;
+
+        if (version != "1" || type != "REQ" || !validNumber(requestId) || !validNumber(clientId)) {
+            sendMessage(clientSocket, "1|RESP|" + requestId + "|ERR|Invalid protocol fields");
+            log("PROTOCOL_ERROR id=" + clientId);
+            break;
+        }
+
+        if (command.size() > 60000) {
+            sendMessage(clientSocket, "1|RESP|" + requestId + "|ERR|Command is too long");
+            break;
+        }
+
+        unsigned long long current = ++requestCount;
+
+        log("RECV id=" + clientId + " requestId=" + requestId + " command=" + command);
+        std::string response;
+        std::string status = "OK";
+
+        if (command == "QUIT") {
+            response = "Session terminated";
+        }
+        else {
+            bool known =
+                command == "HELP" ||
+                command == "TIME" ||
+                command == "UPTIME" ||
+                command == "STATS" ||
+                command.rfind("ECHO ", 0) == 0;
+
+            if (!known) status = "ERR";
+            //response = executeCommand(command);
+        }
+
+        std::string answer = "1|RESP|" + requestId + "|" + status + "|" + response;
+
+        if (!sendMessage(clientSocket, answer)) {
+            log("SEND_ERROR id=" + clientId + " " + socketError("send"));
+            break;
+        }
+
+        log("SEND id=" + clientId + " requestId=" + requestId +
+                 " status=" + status + " processed=" + std::to_string(current));
+
+        if (command == "QUIT") break;
+    }
+
+    shutdown(clientSocket, SD_BOTH);
+    closesocket(clientSocket);
+
+    log("CLIENT_SESSION_CLOSED id=" + clientId);
+}
+
 
 int main(int argc, char* argv[])
 {
