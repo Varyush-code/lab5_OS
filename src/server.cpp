@@ -73,12 +73,61 @@ std::string socketError(const std::string& functionName)
     return result;
 }
 
-
 void onSignal(int)
 {
     running = false;
 }
 
+bool sendAll(SOCKET s, const char* data, int size)
+{
+    int sent = 0;
+
+    while (sent < size) {
+        int result = send(s, data + sent, size - sent, 0);
+        if (result == SOCKET_ERROR || result == 0) return false;
+        sent += result;
+    }
+    return true;
+}
+
+bool receiveAll(SOCKET s, char* data, int size)
+{
+    int received = 0;
+
+    while (received < size) {
+        int result = recv(s, data + received, size - received, 0);
+        if (result == 0) return false;
+        if (result == SOCKET_ERROR) return false;
+        received += result;
+    }
+    return true;
+}
+
+bool sendMessage(SOCKET s, const std::string& message)
+{
+    if (message.empty() || message.size() > MAX_MESSAGE_SIZE) return false;
+    uint32_t length = htonl(static_cast<uint32_t>(message.size()));
+
+    if (!sendAll(s, reinterpret_cast<char*>(&length), 4)) return false;
+    return sendAll(s, message.data(), static_cast<int>(message.size()));
+}
+
+bool receiveMessage(SOCKET s, std::string& message)
+{
+    uint32_t networkLength = 0;
+
+    if (!receiveAll(s, reinterpret_cast<char*>(&networkLength), 4)) return false;
+
+    uint32_t length = ntohl(networkLength);
+
+    if (length == 0 || length > MAX_MESSAGE_SIZE) {
+        log("PROTOCOL_ERROR invalid_length=" + std::to_string(length));
+        return false;
+    }
+
+    message.resize(length);
+    return receiveAll(s, &message[0], static_cast<int>(length));
+}
 
 int main(int argc, char* argv[])
 {
