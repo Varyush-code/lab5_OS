@@ -238,7 +238,35 @@ int main(int argc, char* argv[])
 
         if (ready == 0) continue;
 
+        sockaddr_in clientAddress{};
+        int addressLength = sizeof(clientAddress);
+
+        SOCKET clientSocket = accept(
+            serverSocket,
+            reinterpret_cast<sockaddr*>(&clientAddress),
+            &addressLength
+        );
+
+        if (clientSocket == INVALID_SOCKET)
+        {
+            if (running)
+                log(socketError("accept"));
+            continue;
+        }
+
+        workers.emplace_back(handleClient, clientSocket, clientAddress, timeout);
     }
 
+    log("SHUTDOWN_START");
+    closesocket(serverSocket);
+
+    for (auto& worker : workers) {
+        if (worker.joinable()) worker.join();
+    }
+
+    log("STOP totalRequests=" + std::to_string(requestCount.load()));
+    WSACleanup();
+
+    std::cout << "\nServer stopped." << std::endl;
     return 0;
 } 
