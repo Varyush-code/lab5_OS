@@ -160,6 +160,35 @@ bool validNumber(const std::string& value)
         });
 }
 
+std::string currentTime()
+{
+    auto now = std::chrono::system_clock::now();
+    time_t time = std::chrono::system_clock::to_time_t(now);
+
+    tm localTime{};
+    localtime_s(&localTime, &time);
+
+    std::stringstream ss;
+
+    ss << std::put_time(&localTime, "%d.%m.%Y %H:%M:%S");
+
+    return ss.str();
+}
+
+std::string getUptime()
+{
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>( std::chrono::steady_clock::now() - startTime).count();
+
+    long long hours = elapsed / 3600;
+    long long minutes = (elapsed % 3600) / 60;
+    long long seconds = elapsed % 60;
+
+    return std::to_string(hours) + " h " +
+           std::to_string(minutes) + " min " +
+           std::to_string(seconds) + " sec";
+}
+
+
 std::string executeCommand(const std::string& command)
 {
     if (command == "HELP") {
