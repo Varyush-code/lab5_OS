@@ -18,9 +18,31 @@
 std::atomic<bool> running(true);
 std::atomic<unsigned long long> requestCount(0);
 
+const uint32_t MAX_MESSAGE_SIZE = 65536;
+std::mutex logMutex;
+auto startTime = std::chrono::steady_clock::now();
+
 void log(const std::string& event)
 {
+    std::lock_guard<std::mutex> lock(logMutex);
 
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+    tm localTime{};
+    localtime_s(&localTime, &time);
+
+    std::ofstream file("server.log", std::ios::app);
+
+    std::cout << "[" << std::put_time(&localTime, "%H:%M:%S")
+         << "." << std::setfill('0') << std::setw(3) << ms
+         << "] SERVER " << event << std::endl;
+
+    if (file.is_open()) {
+        file << "[" << std::put_time(&localTime, "%H:%M:%S")
+             << "." << std::setfill('0') << std::setw(3) << ms
+             << "] SERVER " << event << std::endl;
+    }
 }
 
 void onSignal(int)
@@ -97,6 +119,8 @@ int main(int argc, char* argv[])
         WSACleanup();
         return 1;
     }
+
+    
 
     return 0;
 }
