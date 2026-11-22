@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <mutex>
 #include <atomic>
+#include <vector>
+#include <thread>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
@@ -44,6 +46,33 @@ void log(const std::string& event)
              << "] SERVER " << event << std::endl;
     }
 }
+
+std::string socketError(const std::string& functionName)
+{
+    int code = WSAGetLastError();
+    char* message = nullptr;
+
+    FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr,
+        code,
+        0,
+        (LPSTR)&message,
+        0,
+        nullptr
+    );
+
+    std::string result = functionName + " error=" + std::to_string(code);
+
+    if (message) {
+        result += " description=" + std::string(message);
+        LocalFree(message);
+    }
+    return result;
+}
+
 
 void onSignal(int)
 {
@@ -120,7 +149,26 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    
+    if (bind(serverSocket, reinterpret_cast<sockaddr*>(&serverAddress), sizeof(serverAddress)) == SOCKET_ERROR) {
+        log(socketError("bind"));
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
+        log(socketError("listen"));
+        closesocket(serverSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    log("START host=" + host + " port=" + std::to_string(port) + " timeout=" + std::to_string(timeout));
+
+    std::cout << "\nSERVER STARTED\n" << "Host: " << host << std::endl << "Port: " << port << std::endl
+              << "Waiting for clients..." << std::endl << "Press Ctrl+C to stop.\n" << std::endl;
+
+    std::vector<std::thread> workers;
 
     return 0;
 }
