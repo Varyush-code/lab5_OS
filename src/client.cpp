@@ -116,6 +116,26 @@ bool receiveMessage(SOCKET s, std::string& message)
     return receiveAll(s, &message[0], static_cast<int>(length));
 }
 
+bool parseResponse(const std::string& message, std::string& requestId, std::string& status, std::string& payload)
+{
+    size_t p1 = message.find('|');
+    if (p1 == std::string::npos) return false;
+    size_t p2 = message.find('|', p1 + 1);
+    if (p2 == std::string::npos) return false;
+    size_t p3 = message.find('|', p2 + 1);
+    if (p3 == std::string::npos) return false;
+    size_t p4 = message.find('|', p3 + 1);
+    if (p4 == std::string::npos) return false;
+
+    std::string version = message.substr(0, p1);
+    std::string type = message.substr(p1 + 1, p2 - p1 - 1);
+
+    requestId = message.substr(p2 + 1, p3 - p2 - 1);
+    status = message.substr(p3 + 1, p4 - p3 - 1);
+    payload = message.substr(p4 + 1);
+
+    return version == "1" && type == "RESP" && !requestId.empty() && (status == "OK" || status == "ERR");
+}
 
 int main(int argc, char* argv[])
 {
@@ -196,5 +216,139 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    std::cout << "\nConnecting to server..." << std::endl;
+    auto connectStart = std::chrono::steady_clock::now();
+
+    if (connect(clientSocket, reinterpret_cast<sockaddr*>(&serverAddress), sizeof(serverAddress)) == SOCKET_ERROR) {
+        std::cerr << socketError("connect") << std::endl;
+        log("CONNECTION_FAILED host=" + host + " port=" + std::to_string(port));
+
+        closesocket(clientSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    auto connectEnd = std::chrono::steady_clock::now();
+
+    double connectTime = std::chrono::duration<double, std::milli>(connectEnd - connectStart).count();
+    log("CONNECTED id=" + std::to_string(clientId) + " host=" + host + " port=" + std::to_string(port));
+
+    std::cout << "Connected successfully!" << std::endl;
+    std::cout << "Client ID: " << clientId << std::endl;
+    std::cout << "Connection time: " << connectTime << " ms\n";
+    std::cout << "\nStarting test: " << count << " commands.\n" << std::endl;
+
+    std::vector<std::string> commands = {
+        "HELP",
+        "TIME",
+        "UPTIME",
+        "ECHO Test message",
+        "STATS"
+    };
+
+    int sentCount = 0;
+    int receivedCount = 0;
+    int successCount = 0;
+    int errorCount = 0;
+    double totalTime = 0;
+
+    auto testStart = std::chrono::steady_clock::now();
+
+    for (int i = 1; i <= count; i++) {
+        std::string command = commands[(i - 1) % commands.size()];
+        std::string request = "1|REQ|" + std::to_string(i) + "|" + std::to_string(clientId) + "|" + command;
+
+        auto requestStart = std::chrono::steady_clock::now();
+
+        if (!sendMessage(clientSocket, request)) {
+            log("SEND_ERROR requestId=" + std::to_string(i) + " " + socketError("send"));
+            errorCount++;
+            break;
+        }
+
+        sentCount++;
+        log("SEND requestId=" + std::to_string(i) + " command=" + command);
+        std::string response;
+
+        if (!receiveMessage(clientSocket, response)) {
+            int error = WSAGetLastError();
+
+            if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK) {
+                log("TIMEOUT requestId=" + std::to_string(i));
+            }
+            else {
+                log("RECV_ERROR requestId=" + std::to_string(i) + " " + socketError("recv"));
+            }
+
+            errorCount++;
+            break;
+        }
+
+        auto requestEnd = std::chrono::steady_clock::now();
+        double elapsed = std::chrono::duration<double, std::milli>( requestEnd - requestStart).count();
+        totalTime += elapsed;
+        receivedCount++;
+
+        std::string responseId, status, payload;
+        if (!parseResponse(response, responseId, status, payload) || responseId != std::to_string(i)) {
+            log("PROTOCOL_ERROR requestId=" + std::to_string(i));
+            errorCount++;
+            continue;
+        }
+
+        if (status == "OK") successCount++;
+        else errorCount++;
+
+        std::cout << "[" << i << "/" << count << "] "
+             << command << " => " << payload
+             << " (" << std::fixed << std::setprecision(2)
+             << elapsed << " ms)" << std::endl;
+
+        log("RECV requestId=" + responseId + " status=" + status + " time=" + std::to_string(elapsed) + "ms");
+    }
+
+    std::string quitRequest = "1|REQ|999999|" + std::to_string(clientId) + "|QUIT";
+    if (sendMessage(clientSocket, quitRequest)) {
+        std::string response;
+
+        if (receiveMessage(clientSocket, response)) {
+            std::string id, status, payload;
+
+            if (parseResponse(response, id, status, payload)) {
+                std::cout << "\nServer: " << payload << std::endl;
+                log("QUIT_CONFIRMED id=" + std::to_string(clientId));
+            }
+        }
+    }
+
+    auto testEnd = std::chrono::steady_clock::now();
+    double totalDuration = std::chrono::duration<double, std::milli>( testEnd - testStart).count();
+    double averageTime = receivedCount > 0 ? totalTime / receivedCount : 0;
+
+    std::cout << "\n========== TEST RESULTS ==========\n";
+
+    std::cout << "Client ID: " << clientId << std::endl << "Sent requests: " << sentCount << std::endl
+              << "Received: " << receivedCount << std::endl << "Successful: " << successCount << std::endl << "Errors: " << errorCount << std::endl;
+
+    std::cout << "Total time: "<< totalDuration << " ms" << std::endl << "Average latency: " << averageTime << " ms" << std::endl;
+
+    if (totalDuration > 0) {
+        std::cout << "Throughput: " << receivedCount * 1000.0 / totalDuration << " requests/sec" << std::endl;
+    }
+
+    std::cout << "==================================\n";
+
+    log("TEST_FINISHED id=" + std::to_string(clientId) +
+             " sent=" + std::to_string(sentCount) +
+             " received=" + std::to_string(receivedCount) +
+             " successful=" + std::to_string(successCount) +
+             " errors=" + std::to_string(errorCount));
+
+    shutdown(clientSocket, SD_BOTH);
+    closesocket(clientSocket);
+
+    WSACleanup();
+
+    std::cout << "\nClient stopped." << std::endl;
     return 0;
 }
